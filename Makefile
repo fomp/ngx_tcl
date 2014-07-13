@@ -1,4 +1,4 @@
-NGINX_PATH=/home/dino/nginx-1.4.4/
+NGINX_PATH=/home/dino/nginx-1.6.0/
 NGINX=$(NGINX_PATH)/objs/nginx
 NGINX_MAKEFILE=$(NGINX_PATH)/Makefile
 
@@ -9,6 +9,7 @@ all: $(NGINX)
 build: $(NGINX)
 
 test: $(NGINX)
+	pkill -9 nginx || true
 	$(NGINX) -p $(PWD)/test
 
 $(NGINX): $(NGINX_MAKEFILE) ngx_tcl.c
