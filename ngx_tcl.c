@@ -86,6 +86,26 @@ ngx_module_t ngx_tcl_module = {
     NGX_MODULE_V1_PADDING
 };
 
+static void
+ngx_tcl_DecrRefCount(void *data)
+{
+    Tcl_Obj *obj = *(Tcl_Obj**)data;
+    printf("%s(%p)\n", __FUNCTION__, obj); fflush(stdout);
+    Tcl_DecrRefCount(obj);
+}
+
+static void
+ngx_tcl_pool_obj(ngx_pool_t *p, Tcl_Obj *obj)
+{
+    ngx_pool_cleanup_t *cln;
+
+printf("%s(%p)\n", __FUNCTION__, obj); fflush(stdout);
+    cln = ngx_pool_cleanup_add(p, sizeof(Tcl_Obj*));
+    cln->handler = ngx_tcl_DecrRefCount;
+    *(Tcl_Obj**)cln->data = obj;
+    Tcl_IncrRefCount(obj);
+}
+
 static Tcl_Obj *UNKNOWNMethodObj;
 static Tcl_Obj *GETMethodObj;
 static Tcl_Obj *HEADMethodObj;
@@ -193,7 +213,6 @@ printf("%s %p\n", __FUNCTION__, conf); fflush(stdout);
 static ngx_int_t
 ngx_tcl_handler(ngx_http_request_t * r)
 {
-    ngx_chain_t out;
     const char *result;
     char cmdName[80];
     Tcl_Obj *objv[2];
@@ -229,7 +248,7 @@ printf("%s returned %i\n", __FUNCTION__, rc); fflush(stdout);
         return NGX_HTTP_NOT_ALLOWED;
     } 
 
-    return ngx_http_output_filter(r, &out);
+    return NGX_OK;
 }
 
 /*******************************************************************************
@@ -268,9 +287,7 @@ request_status(ClientData clientData, Tcl_Interp *interp, int objc,
 printf("%s(%i)\n", __FUNCTION__, objc); fflush(stdout);
 
     if (objc != 3) {
-printf("before wrong\n");
         Tcl_WrongNumArgs(interp, 2, objv, "count");
-printf("after wrong\n");
         return TCL_ERROR;
     }
 
@@ -297,7 +314,7 @@ request_content_length(ClientData clientData, Tcl_Interp *interp, int objc,
     long contlen;
 
     if (objc != 3) {
-        Tcl_WrongNumArgs(interp, 2, objv, "length");
+        Tcl_WrongNumArgs(interp, 2, objv, "Content-Length");
         return TCL_ERROR;
     }
 
@@ -313,28 +330,36 @@ printf("%li\n", contlen); fflush(stdout);
 }
 
 static int
+request_content_type(ClientData clientData, Tcl_Interp *interp, int objc,
+    Tcl_Obj *const objv[])
+{
+    ngx_http_request_t *r = (ngx_http_request_t*)clientData;
+    int len;
+
+    if (objc != 3) {
+        Tcl_WrongNumArgs(interp, 2, objv, "Content-Type");
+        return TCL_ERROR;
+    }
+
+    len = Tcl_GetCharLength(objv[2]);
+    r->headers_out.content_type_len = len;
+    r->headers_out.content_type.len = len;
+    r->headers_out.content_type.data = (u_char*)Tcl_GetString(objv[2]);
+
+    ngx_tcl_pool_obj(r->pool, objv[2]);
+
+    return TCL_OK;
+}
+
+static int
 request_send_header(ClientData clientData, Tcl_Interp *interp, int objc,
     Tcl_Obj *const objv[])
 {
     ngx_http_request_t *r = (ngx_http_request_t*)clientData;
-    int i;
 
-    if (objc < 4) {
+    if (objc != 2) {
         Tcl_WrongNumArgs(interp, 2, objv, NULL);
         return TCL_ERROR;
-    }
-
-    for (i = 2; i < objc; i+=2 ) {
-        if (strcasecmp(Tcl_GetString(objv[i]), "content_type")) {
-            int len = Tcl_GetCharLength(objv[i+1]);
-            r->headers_out.content_type_len = len;
-            r->headers_out.content_type.len = len;
-            r->headers_out.content_type.data =
-                (u_char*)Tcl_GetString(objv[i+1]);
-        } else if (strcasecmp(Tcl_GetString(objv[i]), "content_length")) {
-        } else {
-            // TODO: arbitrary headers
-        }
     }
 
     ngx_http_send_header(r);
@@ -343,23 +368,12 @@ request_send_header(ClientData clientData, Tcl_Interp *interp, int objc,
     return TCL_OK;
 }
 
-typedef struct {
-    
-} ngx_tcl_cleanup_t;
-
-static void
-ngx_tcl_cleanup_handler(void *data)
-{
-    Tcl_DecrRefCount((Tcl_Obj*)data);
-}
-
 static int
 request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
     Tcl_Obj *const objv[])
 {
     ngx_buf_t *b;
     ngx_chain_t out;
-    ngx_pool_cleanup_t *cln;
     ngx_http_request_t *r = (ngx_http_request_t*)clientData;
 
     // TODO: check args
@@ -380,20 +394,16 @@ request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
     /*  This means that filters should copy it, and not
         try to rewrite in place */
 
-    Tcl_IncrRefCount(objv[2]);
+    ngx_tcl_pool_obj(r->pool, objv[2]);
 
-    cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_tcl_cleanup_t));
-    cln->handler = ngx_tcl_cleanup_handler;
-
-    // TODO: DESTRUCTOR!!!
-
-    return TCL_OK;
+    return ngx_http_output_filter(r, &out);
 }
 
 static char *RequestSubNames[] = {
     "method",
     "status",
     "content_length",
+    "content_type",
     "send_header",
     "send_content",
     NULL
@@ -403,6 +413,7 @@ static Tcl_ObjCmdProc *RequestSubs[] = {
     request_method,
     request_status,
     request_content_length,
+    request_content_type,
     request_send_header,
     request_send_content
 };
