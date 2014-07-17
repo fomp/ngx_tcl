@@ -1,5 +1,5 @@
 ngx_addon_name=ngx_tcl
 HTTP_INCS="$HTTP_INCS /usr/local/include/tcl8.5/"
 HTTP_MODULES="$HTTP_MODULES ngx_tcl_module"
-CORE_LIBS="$CORE_LIBS -L/usr/local/lib -ltcl85"
+CORE_LIBS="$CORE_LIBS -L$ngx_addon_dir -ltcl85"
 NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_tcl.c"

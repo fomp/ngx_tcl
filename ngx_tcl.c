@@ -1,6 +1,6 @@
 /**
-#	vim:set sts=4 sw=4 et sta:
-*/
+ * vim:set sts=4 sw=4 et sta:
+ */
  
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -194,10 +194,10 @@ static ngx_int_t
 ngx_tcl_handler(ngx_http_request_t * r)
 {
     ngx_chain_t out;
-    ngx_buf_t *b;
     const char *result;
     char cmdName[80];
     Tcl_Obj *objv[2];
+    int rc;
 
     ngx_tcl_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_tcl_module);
 
@@ -207,48 +207,38 @@ ngx_tcl_handler(ngx_http_request_t * r)
     objv[0] = conf->handler;
     objv[1] = Tcl_NewStringObj(cmdName, -1);
 
-    if (Tcl_EvalObjv(conf->interp, 2, objv, TCL_EVAL_GLOBAL) != TCL_OK) {
-        // TODO: result in log...
+    Tcl_IncrRefCount(objv[0]);
+    Tcl_IncrRefCount(objv[1]);
+
+    rc = Tcl_EvalObjv(conf->interp, 2, objv, TCL_EVAL_GLOBAL);
+printf("%s returned %i\n", __FUNCTION__, rc); fflush(stdout);
+
+    Tcl_DecrRefCount(objv[0]);
+    Tcl_DecrRefCount(objv[1]);
+
+    if ( rc != TCL_OK) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+            "interpreter returned: %s", Tcl_GetStringResult(conf->interp));
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     result = Tcl_GetString(Tcl_GetObjResult(conf->interp));
-    if (strcmp(result, "") == 0 || strcmp(result, "HTTP_OK") == 0) {
-        r->headers_out.status = NGX_HTTP_OK;
+    if (strcmp(result, "") == 0 || strcasecmp(result, "OK") == 0) {
         return NGX_HTTP_OK;
-    } else if (strcmp(result, "DECLINED") == 0) {
+    } else if (strcasecmp(result, "DECLINED") == 0) {
         return NGX_HTTP_NOT_ALLOWED;
     } 
-
-    b = ngx_palloc(r->pool, sizeof(ngx_buf_t));
-    if (b == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    out.buf = b;
-    out.next = NULL;
-
-    // b->pos = (u_char*)body;
-    // b->last = (u_char*)body + sizeof(body) - 1;
-    // b->memory = 1;	 // This buffer is in read-only memory
-    // This means that filters should copy it, and not
-    // try to rewrite in place
-    // b->last_buf = 1; // this is the last buffer in the buffer chain
-
-    // r->headers_out.status = NGX_HTTP_OK;
-    // r->headers_out.content_length_n = sizeof(body) - 1;
-
-    // rc = ngx_http_send_header(r);
-
-    // if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
-    //    return rc;
-    //}
 
     return ngx_http_output_filter(r, &out);
 }
 
+/*******************************************************************************
+ * request-command
+ */
+
+
 static int
-requestMethodSubcmd(ClientData clientData, Tcl_Interp *interp, int objc,
+request_method(ClientData clientData, Tcl_Interp *interp, int objc,
     Tcl_Obj *const objv[])
 {
     Tcl_Obj *result = UNKNOWNMethodObj;
@@ -268,19 +258,27 @@ requestMethodSubcmd(ClientData clientData, Tcl_Interp *interp, int objc,
 }
 
 static int
-requestStatusSubcmd(ClientData clientData, Tcl_Interp *interp, int objc,
+request_status(ClientData clientData, Tcl_Interp *interp, int objc,
     Tcl_Obj *const objv[])
 {
     ngx_http_request_t *r = (ngx_http_request_t*)clientData;
     int status;
     int rc;
 
-    if (objc < 4) {
-        Tcl_WrongNumArgs(interp, 2, objv, NULL);
+printf("%s(%i)\n", __FUNCTION__, objc); fflush(stdout);
+
+    if (objc != 3) {
+printf("before wrong\n");
+        Tcl_WrongNumArgs(interp, 2, objv, "count");
+printf("after wrong\n");
         return TCL_ERROR;
     }
 
-    rc = Tcl_GetIntFromObj(interp, objv[3], &status);
+printf("num args ok\n"); fflush(stdout);
+
+    rc = Tcl_GetIntFromObj(interp, objv[2], &status);
+
+printf("status = %i\n", status); fflush(stdout);
 
     if (rc != TCL_OK) {
         return rc;
@@ -292,7 +290,30 @@ requestStatusSubcmd(ClientData clientData, Tcl_Interp *interp, int objc,
 }
 
 static int
-requestSendHeaderSubcmd(ClientData clientData, Tcl_Interp *interp, int objc,
+request_content_length(ClientData clientData, Tcl_Interp *interp, int objc,
+    Tcl_Obj *const objv[])
+{
+    ngx_http_request_t *r = (ngx_http_request_t*)clientData;
+    long contlen;
+
+    if (objc != 3) {
+        Tcl_WrongNumArgs(interp, 2, objv, "length");
+        return TCL_ERROR;
+    }
+
+
+    Tcl_GetLongFromObj(interp, objv[2], &contlen);
+    // TODO: check return value
+
+    r->headers_out.content_length_n = (off_t)contlen;
+
+printf("%li\n", contlen); fflush(stdout);
+
+    return TCL_OK;
+}
+
+static int
+request_send_header(ClientData clientData, Tcl_Interp *interp, int objc,
     Tcl_Obj *const objv[])
 {
     ngx_http_request_t *r = (ngx_http_request_t*)clientData;
@@ -308,32 +329,82 @@ requestSendHeaderSubcmd(ClientData clientData, Tcl_Interp *interp, int objc,
             int len = Tcl_GetCharLength(objv[i+1]);
             r->headers_out.content_type_len = len;
             r->headers_out.content_type.len = len;
-            r->headers_out.content_type.data = (u_char*)Tcl_GetString(objv[i+1]);
-            ngx_http_send_header(r);
-            // TODO: check return value
+            r->headers_out.content_type.data =
+                (u_char*)Tcl_GetString(objv[i+1]);
         } else if (strcasecmp(Tcl_GetString(objv[i]), "content_length")) {
-            long contlen;
-            // TODO: check return value
-            Tcl_GetLongFromObj(interp, objv[3], &contlen);
-            r->headers_out.content_length_n = (off_t)contlen;
+        } else {
+            // TODO: arbitrary headers
         }
-
     }
+
+    ngx_http_send_header(r);
+    // TODO: check return value
 
     return TCL_OK;
 }
 
-static char *RequestSubCmdNames[] = {
+typedef struct {
+    
+} ngx_tcl_cleanup_t;
+
+static void
+ngx_tcl_cleanup_handler(void *data)
+{
+    Tcl_DecrRefCount((Tcl_Obj*)data);
+}
+
+static int
+request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
+    Tcl_Obj *const objv[])
+{
+    ngx_buf_t *b;
+    ngx_chain_t out;
+    ngx_pool_cleanup_t *cln;
+    ngx_http_request_t *r = (ngx_http_request_t*)clientData;
+
+    // TODO: check args
+
+    b = ngx_palloc(r->pool, sizeof(ngx_buf_t));
+    if (b == NULL) {
+        // todo: logging....
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    out.buf = b;
+    out.next = NULL;
+
+    b->last_buf = 1; // this is the last buffer in the buffer chain
+    b->pos = (u_char*)Tcl_GetString(objv[2]);
+    b->last = b->pos + Tcl_GetCharLength(objv[2]);
+    b->memory = 1;
+    /*  This means that filters should copy it, and not
+        try to rewrite in place */
+
+    Tcl_IncrRefCount(objv[2]);
+
+    cln = ngx_pool_cleanup_add(r->pool, sizeof(ngx_tcl_cleanup_t));
+    cln->handler = ngx_tcl_cleanup_handler;
+
+    // TODO: DESTRUCTOR!!!
+
+    return TCL_OK;
+}
+
+static char *RequestSubNames[] = {
     "method",
     "status",
+    "content_length",
     "send_header",
+    "send_content",
     NULL
 };
 
-static Tcl_ObjCmdProc *RequestSubCmds[] = {
-    requestMethodSubcmd,
-    requestStatusSubcmd,
-    requestSendHeaderSubcmd
+static Tcl_ObjCmdProc *RequestSubs[] = {
+    request_method,
+    request_status,
+    request_content_length,
+    request_send_header,
+    request_send_content
 };
 
 static int
@@ -343,17 +414,24 @@ tclRequestCmd(ClientData clientData, Tcl_Interp *interp, int objc,
     int index;
     int rc;
 
+printf("%s\n", __FUNCTION__); fflush(stdout);
+
     if (objc < 2) {
         Tcl_WrongNumArgs(interp, 2, objv, NULL);
         return TCL_ERROR;
     }
 
-    rc = Tcl_GetIndexFromObj(interp, objv[1], RequestSubCmdNames, "", 0,
+    rc = Tcl_GetIndexFromObj(interp, objv[1], RequestSubNames, "subcmd", 0,
         &index);
+
+printf("index=%i rc=%i\n", index, rc); fflush(stdout);
 
     if (rc != TCL_OK) {
         return rc;
     }
 
-    return RequestSubCmds[index](clientData, interp, objc, objv);
+    rc = RequestSubs[index](clientData, interp, objc, objv);
+printf("subcmd returned %i\n", rc);
+
+    return rc;
 }
