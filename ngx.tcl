@@ -19,7 +19,7 @@ set content_type text/html
 puts "STARTING INTERP"
 
 proc ngx_handler {r} {
-    $r status 100
+    $r status 200
     $r content_type $::content_type
     $r content_length $::content_length
     $r send_header
@@ -31,6 +31,7 @@ proc ngx_handler {r} {
         GET {
             puts "sending..."
             $r send_content $::content
+            puts "send"
         }
 
         default {
