@@ -33,7 +33,7 @@ static char	*ngx_tcl_tcl_handler_cmd(ngx_conf_t *cf, ngx_command_t * cmd,
 static void	*ngx_tcl_create_loc_conf(ngx_conf_t *cf);
 static char	*ngx_tcl_merge_loc_conf(ngx_conf_t *cf, void *parent,
 		    void *child);
-static ngx_int_t ngx_tcl_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_tcl_handler(ngx_http_request_t *r);
 static int	 tclRequestCmd(ClientData clientData, Tcl_Interp *interp,
 		    int objc, Tcl_Obj *const objv[]);
 static ngx_int_t ngx_tcl_init(ngx_cycle_t *cycle);
@@ -104,6 +104,7 @@ printf("%s(%p)\n", __FUNCTION__, obj); fflush(stdout);
     cln->handler = ngx_tcl_DecrRefCount;
     *(Tcl_Obj**)cln->data = obj;
     Tcl_IncrRefCount(obj);
+printf("leaving %s\n", __FUNCTION__); fflush(stdout);
 }
 
 static Tcl_Obj *UNKNOWNMethodObj;
@@ -201,7 +202,7 @@ printf("%s %p\n", __FUNCTION__, conf); fflush(stdout);
     }
 
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
-    clcf->handler = ngx_tcl_handler;
+    clcf->handler = ngx_http_tcl_handler;
 
     lcf->interp = i->interp;
     lcf->handler = Tcl_NewStringObj((const char*)args[2].data, args[2].len);
@@ -211,7 +212,7 @@ printf("%s %p\n", __FUNCTION__, conf); fflush(stdout);
 }
 
 static ngx_int_t
-ngx_tcl_handler(ngx_http_request_t * r)
+ngx_http_tcl_handler(ngx_http_request_t * r)
 {
     const char *result;
     char cmdName[80];
@@ -235,7 +236,7 @@ printf("%s returned %i\n", __FUNCTION__, rc); fflush(stdout);
     Tcl_DecrRefCount(objv[0]);
     Tcl_DecrRefCount(objv[1]);
 
-    if ( rc != TCL_OK) {
+    if (rc != TCL_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
             "interpreter returned: %s", Tcl_GetStringResult(conf->interp));
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -243,12 +244,13 @@ printf("%s returned %i\n", __FUNCTION__, rc); fflush(stdout);
 
     result = Tcl_GetString(Tcl_GetObjResult(conf->interp));
     if (strcmp(result, "") == 0 || strcasecmp(result, "OK") == 0) {
+printf("returning NGX_HTTP_OK\n"); fflush(stdout);
         return NGX_HTTP_OK;
     } else if (strcasecmp(result, "DECLINED") == 0) {
         return NGX_HTTP_NOT_ALLOWED;
     } 
 
-    return NGX_OK;
+    return NGX_HTTP_OK;
 }
 
 /*******************************************************************************
@@ -318,7 +320,6 @@ request_content_length(ClientData clientData, Tcl_Interp *interp, int objc,
         return TCL_ERROR;
     }
 
-
     Tcl_GetLongFromObj(interp, objv[2], &contlen);
     // TODO: check return value
 
@@ -374,6 +375,7 @@ request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
 {
     ngx_buf_t *b;
     ngx_chain_t out;
+    int rc;
     ngx_http_request_t *r = (ngx_http_request_t*)clientData;
 
     // TODO: check args
@@ -396,7 +398,15 @@ request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
 
     ngx_tcl_pool_obj(r->pool, objv[2]);
 
-    return ngx_http_output_filter(r, &out);
+    printf("passing chain to filter\n"); fflush(stdout);
+
+    rc = ngx_http_output_filter(r, &out);
+
+    printf("ngx_http_output_filter returns %i\n", rc); fflush(stdout);
+
+    // TODO: check return value
+
+    return TCL_OK;
 }
 
 static char *RequestSubNames[] = {
