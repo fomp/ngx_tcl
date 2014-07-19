@@ -16,7 +16,7 @@ set content {
 set content_length [string length $content]
 set content_type text/html
 
-puts "STARTING INTERP"
+puts "TCL: STARTING INTERP"
 
 proc ngx_handler {r} {
     $r status 200
@@ -29,9 +29,9 @@ proc ngx_handler {r} {
         }
 
         GET {
-            puts "sending..."
+            puts "TCL: sending..."
             $r send_content $::content
-            puts "send"
+            puts "TCL: send"
         }
 
         default {
