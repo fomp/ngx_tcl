@@ -1,5 +1,6 @@
 TCL_PATH=/home/dino/tcl85
-NGINX_PATH=/home/dino/nginx-1.6.0/
+NGINX_PATH=/home/dino/src/nginx-1.6.0/
+
 NGINX=$(NGINX_PATH)/objs/nginx
 NGINX_MAKEFILE=$(NGINX_PATH)/Makefile
 
