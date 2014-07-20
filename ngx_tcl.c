@@ -87,6 +87,14 @@ ngx_module_t ngx_tcl_module = {
 };
 
 static void
+ngx_tcl_set_error_code(Tcl_Interp *interp, int rc)
+{
+    char rcstr[10];
+    ngx_snprintf((u_char*)rcstr, sizeof(rcstr), "%i", rc);
+    Tcl_SetErrorCode(interp, "NGX", rcstr, NULL);
+}
+
+static void
 ngx_tcl_cleanup_Tcl_Obj(void *data)
 {
     Tcl_Obj *obj = *(Tcl_Obj**)data;
@@ -94,16 +102,23 @@ ngx_tcl_cleanup_Tcl_Obj(void *data)
     Tcl_DecrRefCount(obj);
 }
 
-static void
+static int
 ngx_tcl_cleanup_add_Tcl_Obj(ngx_pool_t *p, Tcl_Obj *obj)
 {
     ngx_pool_cleanup_t *cln;
 
 printf("%s(%p)\n", __FUNCTION__, obj); fflush(stdout);
     cln = ngx_pool_cleanup_add(p, sizeof(Tcl_Obj*));
+
+    if (cln == NULL) {
+        return TCL_ERROR;
+    }
+
     cln->handler = ngx_tcl_cleanup_Tcl_Obj;
     *(Tcl_Obj**)cln->data = obj;
     Tcl_IncrRefCount(obj);
+
+    return TCL_OK;
 }
 
 typedef struct {
@@ -123,7 +138,7 @@ printf("%s\n", __FUNCTION__); fflush(stdout);
 }
 
 
-static void
+static int
 ngx_tcl_cleanup_add_Tcl_Command(ngx_pool_t *pool, Tcl_Interp *interp,
     Tcl_Command token)
 {
@@ -133,10 +148,17 @@ ngx_tcl_cleanup_add_Tcl_Command(ngx_pool_t *pool, Tcl_Interp *interp,
 printf("%s\n", __FUNCTION__); fflush(stdout);
 
     cln = ngx_pool_cleanup_add(pool, sizeof(ngx_tcl_cleanup_Tcl_Command_t));
+
+    if (cln == NULL) {
+        return TCL_ERROR;
+    }
+
     cln->handler = ngx_tcl_cleanup_Tcl_Command;
     clnd = (ngx_tcl_cleanup_Tcl_Command_t*)cln->data;
     clnd->interp = interp;
     clnd->token = token;
+
+    return TCL_OK;
 }
 
 
@@ -150,15 +172,15 @@ static Tcl_Obj *DELETEMethodObj;
 static ngx_int_t ngx_tcl_init(ngx_cycle_t *cycle)
 {
 printf("%s\n", __FUNCTION__); fflush(stdout);
-#define METH(X) X ## MethodObj = Tcl_NewStringObj(#X, -1); \
+#define OBJ(X) X ## MethodObj = Tcl_NewStringObj(#X, -1); \
         Tcl_IncrRefCount(X ## MethodObj);
-    METH(UNKNOWN);
-    METH(GET);
-    METH(HEAD);
-    METH(POST);
-    METH(PUT);
-    METH(DELETE);
-#undef METH
+    OBJ(UNKNOWN);
+    OBJ(GET);
+    OBJ(HEAD);
+    OBJ(POST);
+    OBJ(PUT);
+    OBJ(DELETE);
+#undef OBJ
 
     return NGX_OK;
 }
@@ -388,9 +410,7 @@ request_content_type(ClientData clientData, Tcl_Interp *interp, int objc,
     r->headers_out.content_type.len = len;
     r->headers_out.content_type.data = (u_char*)Tcl_GetString(objv[2]);
 
-    ngx_tcl_cleanup_add_Tcl_Obj(r->pool, objv[2]);
-
-    return TCL_OK;
+    return ngx_tcl_cleanup_add_Tcl_Obj(r->pool, objv[2]);
 }
 
 static int
@@ -419,12 +439,14 @@ request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
     int rc;
     ngx_http_request_t *r = (ngx_http_request_t*)clientData;
 
-    // TODO: check args
+    if (objc != 3) {
+        Tcl_WrongNumArgs(interp, 2, objv, "content");
+        return TCL_ERROR;
+    }
 
     b = ngx_calloc_buf(r->pool);
     if (b == NULL) {
-        // todo: logging....
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        return TCL_ERROR;
     }
 
     out.buf = b;
@@ -436,11 +458,18 @@ request_send_content(ClientData clientData, Tcl_Interp *interp, int objc,
     b->last_buf = 1;
     b->last_in_chain = 1;
 
-    ngx_tcl_cleanup_add_Tcl_Obj(r->pool, objv[2]);
+    rc = ngx_tcl_cleanup_add_Tcl_Obj(r->pool, objv[2]);
 
-    printf("passing chain to filter\n"); fflush(stdout);
+    if (rc != TCL_OK) {
+        return rc;
+    }
 
     rc = ngx_http_output_filter(r, &out);
+
+    if (rc != NGX_OK) {
+        ngx_tcl_set_error_code(interp, rc);
+        return TCL_ERROR;
+    }
 
     printf("ngx_http_output_filter returns %i\n", rc); fflush(stdout);
 
