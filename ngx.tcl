@@ -19,19 +19,24 @@ set content_type text/html
 puts "TCL: STARTING INTERP"
 
 proc ngx_handler {r} {
-    $r status 200
-    $r content_type $::content_type
-    $r content_length $::content_length
-    $r send_header
-
     switch -- [$r method] {
         HEAD {
+            $r status 200
+            $r content_type $::content_type
+            $r content_length $::content_length
+            $r send_header
         }
 
         GET {
-            puts "TCL: sending..."
+            $r status 200
+            $r content_type $::content_type
+            $r content_length $::content_length
+            $r send_header
             $r send_content $::content
-            puts "TCL: send"
+        }
+
+        POST {
+            return AGAIN
         }
 
         default {
@@ -41,4 +46,3 @@ proc ngx_handler {r} {
 
     return OK
 }
-
