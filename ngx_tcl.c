@@ -7,19 +7,19 @@
 #include <ngx_http.h>
 #include <tcl.h>
 
-struct ngx_tcl_interp_s {
+struct ngx_tcl_interp_conf_s {
     Tcl_Interp *interp;
     ngx_str_t name;
     ngx_str_t file;
-    struct ngx_tcl_interp_s *next;
+    struct ngx_tcl_interp_conf_s *next;
 };
 
-typedef struct ngx_tcl_interp_s ngx_tcl_interp_t;
+typedef struct ngx_tcl_interp_conf_s ngx_tcl_interp_conf_t;
 
-static ngx_tcl_interp_t *interps = NULL;
+static ngx_tcl_interp_conf_t *interp_confs = NULL;
 
 struct ngx_tcl_loc_conf_s {
-    Tcl_Interp *interp;
+    struct ngx_tcl_interp_conf_s *interp_conf;
     Tcl_Obj *handler;
 };
 
@@ -199,16 +199,16 @@ printf("%s\n", __FUNCTION__); fflush(stdout);
 static ngx_int_t
 ngx_tcl_init(ngx_conf_t *cf)
 {
-    ngx_tcl_interp_t *iconf;
+    ngx_tcl_interp_conf_t *iconf;
     int rc;
 
 printf("%s\n", __FUNCTION__); fflush(stdout);
 
-    if (interps != NULL) {
+    if (interp_confs != NULL) {
         Tcl_FindExecutable(NULL);
     }
 
-    for (iconf = interps; iconf != NULL; iconf = iconf->next) {
+    for (iconf = interp_confs; iconf != NULL; iconf = iconf->next) {
         iconf->interp = Tcl_CreateInterp();
         rc = Tcl_Init(iconf->interp);
         if (rc != TCL_OK) {
@@ -245,7 +245,7 @@ printf("%s\n", __FUNCTION__); fflush(stdout);
         return NGX_CONF_ERROR;
     }
 
-    conf->interp = NGX_CONF_UNSET_PTR;
+    conf->interp_conf = NGX_CONF_UNSET_PTR;
 
     return conf;
 }
@@ -258,7 +258,7 @@ ngx_tcl_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 
 printf("%s\n", __FUNCTION__); fflush(stdout);
 
-    ngx_conf_merge_ptr_value(conf->interp, prev->interp, NULL);
+    ngx_conf_merge_ptr_value(conf->interp_conf, prev->interp_conf, NULL);
 
     return NGX_CONF_OK;
 }
@@ -266,17 +266,17 @@ printf("%s\n", __FUNCTION__); fflush(stdout);
 static char*
 ngx_tcl_create_tcl_cmd(ngx_conf_t * cf, ngx_command_t * cmd, void * conf)
 {
-    ngx_tcl_interp_t *I;
+    ngx_tcl_interp_conf_t *I;
     ngx_str_t *args = cf->args->elts;
 
 printf("create_tcl %p\n", conf); fflush(stdout);
 
-    I = malloc(sizeof(ngx_tcl_interp_t));
+    I = malloc(sizeof(ngx_tcl_interp_conf_t));
     I->interp = NULL;
     I->name = args[1];
     I->file = args[2];
-    I->next = interps;
-    interps = I;
+    I->next = interp_confs;
+    interp_confs = I;
 
     return NGX_CONF_OK;
 }
@@ -287,15 +287,15 @@ ngx_tcl_tcl_handler_cmd(ngx_conf_t * cf, ngx_command_t * cmd, void * conf)
     ngx_str_t *args = cf->args->elts;
     ngx_http_core_loc_conf_t * clcf;
     ngx_tcl_loc_conf_t * lcf = (ngx_tcl_loc_conf_t*)conf;
-    ngx_tcl_interp_t *i;
+    ngx_tcl_interp_conf_t *iconf;
 
 printf("%s %p\n", __FUNCTION__, conf); fflush(stdout);
 
-    for (i = interps; i; i = i->next) {
-        if (ngx_strcmp(args[1].data, i->name.data) == 0) break;
+    for (iconf = interp_confs; iconf; iconf = iconf->next) {
+        if (ngx_strcmp(args[1].data, iconf->name.data) == 0) break;
     }
 
-    if (!i) {
+    if (!iconf) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
             "interpreter not found %s", args[1].data);
         return NGX_CONF_ERROR;
@@ -304,7 +304,7 @@ printf("%s %p\n", __FUNCTION__, conf); fflush(stdout);
     clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
     clcf->handler = ngx_http_tcl_handler;
 
-    lcf->interp = i->interp;
+    lcf->interp_conf = iconf;
     lcf->handler = Tcl_NewStringObj((const char*)args[2].data, args[2].len);
     Tcl_IncrRefCount(lcf->handler);
 
@@ -319,16 +319,21 @@ ngx_http_tcl_handler(ngx_http_request_t * r)
     Tcl_Obj *objv[2];
     int rc;
     Tcl_Command token;
+    ngx_tcl_loc_conf_t *conf;
+    Tcl_Interp *interp;
 
-    ngx_tcl_loc_conf_t *conf = ngx_http_get_module_loc_conf(r, ngx_tcl_module);
+printf("%s\n", __FUNCTION__); fflush(stdout);
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_tcl_module);
+    interp = conf->interp_conf->interp;
 
     /* create request command */
     ngx_snprintf((u_char*)cmdName, sizeof(cmdName), "ngx%p", r);
 
-    token = Tcl_CreateObjCommand(conf->interp, cmdName, tclRequestCmd,
+    token = Tcl_CreateObjCommand(interp, cmdName, tclRequestCmd,
         r, NULL);
 
-    ngx_tcl_cleanup_add_Tcl_Command(r->pool, conf->interp, token);
+    ngx_tcl_cleanup_add_Tcl_Command(r->pool, interp, token);
 
     /* prepare arguments */
     objv[0] = conf->handler;
@@ -338,7 +343,7 @@ ngx_http_tcl_handler(ngx_http_request_t * r)
     Tcl_IncrRefCount(objv[1]);
 
     /* call command */
-    rc = Tcl_EvalObjv(conf->interp, 2, objv, TCL_EVAL_GLOBAL);
+    rc = Tcl_EvalObjv(interp, 2, objv, TCL_EVAL_GLOBAL);
 printf("%s returned %i\n", __FUNCTION__, rc); fflush(stdout);
 
     Tcl_DecrRefCount(objv[0]);
@@ -346,11 +351,11 @@ printf("%s returned %i\n", __FUNCTION__, rc); fflush(stdout);
 
     if (rc != TCL_OK) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-            "interpreter returned: %s", Tcl_GetStringResult(conf->interp));
+            "interpreter returned: %s", Tcl_GetStringResult(interp));
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    result = Tcl_GetString(Tcl_GetObjResult(conf->interp));
+    result = Tcl_GetString(Tcl_GetObjResult(interp));
     if (strcmp(result, "") == 0 || strcasecmp(result, "OK") == 0) {
 printf("returning NGX_HTTP_OK\n"); fflush(stdout);
         return NGX_HTTP_OK;
