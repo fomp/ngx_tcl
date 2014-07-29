@@ -19,7 +19,8 @@ $(NGINX): $(NGINX_MAKEFILE) ngx_tcl.c
 $(NGINX_MAKEFILE): config
 	cd $(NGINX_PATH); \
 	TCL_PATH=$(TCL_PATH) \
-	./configure --add-module=$(PWD)
+	./configure --add-module=$(PWD) --with-http_ssl_module \
+		--with-http_spdy_module
 
 clean:
 	cd $(NGINX_PATH); if [ -f Makefile ]; then make clean; fi
