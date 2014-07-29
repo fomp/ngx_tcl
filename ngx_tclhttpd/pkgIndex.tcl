@@ -1,0 +1,11 @@
+package ifneeded httpd 0.9 [list source [file join $dir httpd.tcl]]
+
+package ifneeded httpd::url 0.9 [list source [file join $dir url.tcl]]
+package ifneeded httpd::doc 0.9 [list source [file join $dir doc.tcl]]
+package ifneeded httpd::doc_error 0.9 [list source [file join $dir doc_error.tcl]]
+package ifneeded httpd::utils 0.9 [list source [file join $dir utils.tcl]]
+package ifneeded httpd::cookie 0.9 [list source [file join $dir cookie.tcl]]
+package ifneeded httpd::mtype 0.9 [list source [file join $dir mtype.tcl]]
+package ifneeded httpd::cgi 0.9 [list source [file join $dir cgi.tcl]]
+package ifneeded httpd::upload 0.9 [list source [file join $dir upload.tcl]]
+package ifneeded httpd::log 0.9 [list source [file join $dir log.tcl]]
