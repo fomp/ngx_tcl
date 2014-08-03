@@ -139,6 +139,7 @@ proc Httpd_CurrentSocket {{sock {}}} {
 }
 
 proc Httpd_ReturnFile {sock type path {offset 0}} {
+    $sock out.status 200
     $sock out.content-type $type
     $sock send_file $path
 }
@@ -149,6 +150,28 @@ proc Httpd_ReturnData {sock type data {code 200} {close 0}} {
     $sock out.status $code
     $sock send_header
     $sock send_content $data
+}
+
+set HttpdRedirectFormat {
+    <html><head>
+    <title>Found</title>
+    </head><body>
+    This document has moved to a new <a href="%s">location</a>.
+    Please update your documents and hotlists accordingly.
+    </body></html>
+}
+
+proc Httpd_Redirect {newurl sock} {
+    global Httpd HttpdRedirectFormat
+
+    set message [format $HttpdRedirectFormat $newurl]
+    $sock out.headers.add Location $newurl
+    $sock out.content-type text/html
+    $sock out.content-length [string length $message]
+    $sock out.status 302
+
+    $sock send_header
+    $sock send_content $message
 }
 
 proc emu_tclhttpd {r} {
