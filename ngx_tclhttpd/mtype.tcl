@@ -44,9 +44,8 @@ proc Mtype_ReadTypes {file} {
 	.map	application/x-imagemap
 	.subst	application/x-tcl-subst
     }
-    if {[catch {open $file} in]} {
-	return
-    }
+
+    set in [open $file]
 
     while {[gets $in line] >= 0} {
 	if {[regexp {^( 	)*$} $line]} {
