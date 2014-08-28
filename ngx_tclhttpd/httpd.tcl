@@ -53,13 +53,12 @@ proc Httpd_Error {sock code {detail ""}} {
     # HttpdDoCallback $sock $message
 
     if {[catch {
-	$sock out.content-type text/html
-	$sock out.content-length [string length $message]
-	$sock out.status $code
-	$sock send_header
-	$sock send_content $message
+        ::ngx::outheader Content-Type text/html
+        ::ngx::status $code
+        ::ngx::sendcontent $message
     } err]} {
 	Log $sock LostSocket $data(url) $err
+        return -code error $err
     }
 }
 
@@ -113,7 +112,7 @@ proc Httpd_SelfUrl {url {sock ""}} {
 }
 
 proc Httpd_Protocol {sock} {
-    return [$sock protocol]
+    return [::ngx::getv scheme]
 }
 
 proc Httpd_Port {sock} {
@@ -127,7 +126,7 @@ proc Httpd_Name {sock} {
 }
 
 proc Httpd_SetCookie {sock cookie {modify 0}} {
-    $sock out.headers.add set-cookie $cookie
+    ::ngx::outheader set-cookie $cookie
 }
 
 proc Httpd_CurrentSocket {{sock {}}} {
@@ -139,17 +138,15 @@ proc Httpd_CurrentSocket {{sock {}}} {
 }
 
 proc Httpd_ReturnFile {sock type path {offset 0}} {
-    $sock out.status 200
-    $sock out.content-type $type
-    $sock send_file $path
+    ::ngx::status 200
+    ::ngx::outheader content-type $type
+    ::ngx::sendfile $path
 }
 
 proc Httpd_ReturnData {sock type data {code 200} {close 0}} {
-    $sock out.content-type $type
-    $sock out.content-length [string length $data]
-    $sock out.status $code
-    $sock send_header
-    $sock send_content $data
+    ::ngx::outheader content-type $type
+    ::ngx::status $code
+    ::ngx::sendcontent $data
 }
 
 set HttpdRedirectFormat {
@@ -165,36 +162,48 @@ proc Httpd_Redirect {newurl sock} {
     global Httpd HttpdRedirectFormat
 
     set message [format $HttpdRedirectFormat $newurl]
-    $sock out.headers.add Location $newurl
-    $sock out.content-type text/html
-    $sock out.content-length [string length $message]
-    $sock out.status 302
-
-    $sock send_header
-    $sock send_content $message
+    ::ngx::outheader \
+        Location $newurl \
+        content-type text/html
+    ::ngx::status 302
+    ::ngx::sendcontent $message
 }
 
-proc emu_tclhttpd {r} {
+proc ::ngx::socket {} {
+    return sock42
+}
+
+proc ::ngx::var? {varname} {
+    if {[catch {var $varname} result]} {
+        set result {}
+    }
+
+    return $result
+}
+
+proc emu_tclhttpd {} {
     # TODO: name must be set...
 
-    array set ::Httpd$r [list           \
-        proto   [$r proto]              \
-        uri     [$r uri]                \
-        url     [$r url]                \
-        query   [$r query]              \
-        ipaddr  [$r ipaddr]             \
-	cert    ""                      \
-        count   [$r in.content-length]  \
-        name    localhost               \
+    set sock [ngx::socket]
+
+    array set ::Httpd$sock [list                \
+        proto   [::ngx::getv scheme]            \
+        uri     [::ngx::getv request_uri]       \
+        url     [::ngx::getv uri]               \
+        query   [::ngx::getv args {}]           \
+        ipaddr  [::ngx::getv remote_addr]       \
+	cert    ""                              \
+        count   [::ngx::getv content_length 0]  \
+        name    localhost                       \
     ]
 
 
     array set ::Httpd [list             \
         name            localhost       \
         server          ngx_tclhttp/0.1 \
-        currentSocket   $r              \
+        currentSocket   $sock           \
     ]
 
-    ::Url_Dispatch $r
+    ::Url_Dispatch $sock
 }
 

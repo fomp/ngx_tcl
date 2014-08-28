@@ -16,30 +16,31 @@ set content_type text/html
 puts "TCL: STARTING INTERP"
 
 proc ngx_handler {} {
-    set atts {unparsed_uri uri method protocol ipaddr}
+    foreach var {
+        uri request_uri request_method scheme remote_addr args content_length
+    } {
+        set val [ngx::getv $var ""]
+        set $var $val
+        puts [string toupper $var]:$val:
+    }
 
-    set unparsed_uri [ngx::req::unparsed_uri]
-    set uri [ngx::req::uri]
-    set method [ngx::req::method]
-    set scheme [ngx::req::scheme]
-    set ipaddr [ngx::req::ipaddr]
+    ngx::status 200
 
-    ngx::res::status 200
-    ngx::res::Content-Type $::content_type
+    ngx::outheader Content-Type $::content_type
 
-    switch -- $method {
+    switch -- $request_method {
         HEAD {
-            ngx::res::Content-Length [string length $::content]
-            ngx::send_header
+            ngx::outheader Content-Length [string length $::content]
+            ngx::sendheader
         }
 
         GET {
             if {[string match *passwd* $uri]} {
-                ngx::res::Content-Type text/plain
-                ngx::send_file /etc/passwd
+                ngx::outheader Content-Type text/plain
+                ngx::sendfile /etc/passwd
             } else {
-                ngx::res::Content-Type $::content_type
-                ngx::send_content $::content
+                ngx::outheader Content-Type $::content_type
+                ngx::sendcontent $::content
             }
         }
 
